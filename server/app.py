@@ -34,6 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("LocalGateway")
 
+app = Flask(__name__)
 # CORS irrestrito e suporte a Private Network Access (PNA) para navegadores no Vercel
 CORS(app, resources={r"/*": {"origins": "*"}})
 sock = Sock(app)
