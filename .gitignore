@@ -1,0 +1,87 @@
+# ==============================================================================
+# VendorOps - Production .gitignore
+# ==============================================================================
+
+# Node / Web Frontend (Vite / React)
+web/node_modules/
+node_modules/
+web/dist/
+dist/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Python Server / Backend
+server/__pycache__/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Runtime Logs & Databases
+server/audit.log
+audit.log
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Android / Gradle
+android/.gradle/
+.gradle/
+android/build/
+android/**/build/
+android/app/build/
+android/core-database/build/
+android/core-network/build/
+android/core-media/build/
+android/core-state/build/
+android/feature-overlay/build/
+android/local.properties
+local.properties
+android/.idea/
+.idea/
+*.iml
+android/**/*.iml
+.cxx/
+captures/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
