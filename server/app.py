@@ -385,13 +385,15 @@ def device_websocket(ws, device_tag: str):
                             cleanup_ws_lock(sub)
 
                 elif msg_type == TYPE_AUDIO:
-                    # Forward de áudio em tempo real para todos os operadores da sala
-                    subscribers = rooms.get_room_subscribers(room)
-                    bin_msg = bytes(message)
-                    for sub in subscribers:
-                        if not safe_send(sub, bin_msg):
-                            rooms.unsubscribe_operator(sub)
-                            cleanup_ws_lock(sub)
+                    # CONTEXTUAL AUDIO FILTER: Roteia apenas VOICE_PRIMARY (0x01) para entregar apenas voz de vendas
+                    audio_ctx = header["flags"]
+                    if audio_ctx == AUDIO_VOICE_PRIMARY or audio_ctx == 0x01:
+                        subscribers = rooms.get_room_subscribers(room)
+                        bin_msg = bytes(message)
+                        for sub in subscribers:
+                            if not safe_send(sub, bin_msg):
+                                rooms.unsubscribe_operator(sub)
+                                cleanup_ws_lock(sub)
 
                 elif msg_type == TYPE_SYNC_TICK:
                     # A/V SYNC LOCK: Propaga o timestamp de sincronia do Android para o LiveMonitor
