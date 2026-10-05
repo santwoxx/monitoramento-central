@@ -407,6 +407,19 @@ def operator_websocket(ws):
                         rooms.unsubscribe_operator(ws)
                         current_room = None
 
+                    elif action in ("SEND_COMMAND", "COMMAND"):
+                        target_id = data.get("deviceId", "VND1").replace("device_", "").strip().upper()
+                        cmd = data.get("command") or data.get("action_type") or "REQUEST_KEYFRAME"
+                        params = data.get("params") or {}
+                        dev_ws = rooms.get_device_ws(target_id)
+                        if dev_ws:
+                            cmd_payload = {"action": cmd, **params}
+                            try:
+                                dev_ws.send(json.dumps(cmd_payload))
+                                logger.info(f"Comando [{cmd}] despachado para [{target_id}] via operator socket.")
+                            except Exception as e:
+                                logger.warning(f"Erro ao enviar comando para [{target_id}]: {e}")
+
                 except Exception as e:
                     logger.error(f"Erro ao processar mensagem do operador: {e}")
 

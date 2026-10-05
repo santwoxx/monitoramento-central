@@ -146,6 +146,11 @@ class MediaProjectionPipeline(
                 }
                 codec.setParameters(params)
                 Log.d(TAG, "⚡ I-Frame IDR forçado com sucesso para o deviceTag: $deviceTag")
+
+                // Despacha imediatamente os cabeçalhos SPS/PPS se já disponíveis para o cliente inicializar
+                spsPpsBuffer?.let { spsPps ->
+                    packetizeAndSendNal(spsPps, true, 0L)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Falha ao forçar I-Frame: ${e.message}")
             }
@@ -269,6 +274,11 @@ class MediaProjectionPipeline(
             startEncoderDrainLoop(codec)
             Log.i(TAG, "MediaCodec 720p Zero-Copy e VirtualDisplay inicializados com sucesso.")
 
+            scope.launch(Dispatchers.IO) {
+                kotlinx.coroutines.delay(150)
+                forceKeyFrame()
+            }
+
         } catch (e: Exception) {
             Log.e(TAG, "Erro crítico na inicialização do encoder: ${e.message}", e)
             stop()
@@ -306,6 +316,8 @@ class MediaProjectionPipeline(
 
                             if (isCodecConfig) {
                                 spsPpsBuffer = rawData
+                                frameSeq++
+                                packetizeAndSendNal(rawData, true, frameSeq)
                             } else {
                                 frameSeq++
                                 val packetToSend = if (isKeyframe && spsPpsBuffer != null) {

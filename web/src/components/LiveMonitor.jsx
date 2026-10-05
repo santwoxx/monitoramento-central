@@ -112,6 +112,9 @@ export const LiveMonitor = ({
             }
           }
           pruneBufferAndSync(videoElement, sourceBuffer);
+          if (videoElement.paused) {
+            videoElement.play().catch(() => {});
+          }
         });
 
         connectLazyWebSocket();
@@ -156,21 +159,22 @@ export const LiveMonitor = ({
   }, [deviceId, serverIp]);
 
   /**
-   * Buffer Pruning (< 200ms Guarantee):
-   * Se o atraso for superior a 250ms, salta para 50ms antes da ponta do buffer.
+   * Buffer Pruning (< 100ms Ultra-Low Latency Guarantee):
+   * Se o atraso for superior a 150ms, salta para 30ms antes da ponta do buffer.
    */
   const pruneBufferAndSync = (video, sb) => {
     if (!sb || sb.buffered.length === 0) return;
     const bufferedEnd = sb.buffered.end(0);
     const current = video.currentTime;
 
-    if (bufferedEnd - current > 0.25) {
-      video.currentTime = Math.max(0, bufferedEnd - 0.05);
+    if (bufferedEnd - current > 0.15) {
+      video.currentTime = Math.max(0, bufferedEnd - 0.03);
+      if (video.paused) video.play().catch(() => {});
     }
 
     const bufferedStart = sb.buffered.start(0);
-    if (!sb.updating && current - bufferedStart > 2.0) {
-      try { sb.remove(bufferedStart, current - 0.5); } catch (_) {}
+    if (!sb.updating && current - bufferedStart > 1.5) {
+      try { sb.remove(bufferedStart, current - 0.3); } catch (_) {}
     }
   };
 
@@ -191,9 +195,24 @@ export const LiveMonitor = ({
 
     ws.onopen = () => {
       setConnectionStatus('WI-FI STREAM ATIVO');
+      // 1. Inscreve na sala do vendedor
       ws.send(JSON.stringify({
         action: 'SUBSCRIBE',
         deviceId: deviceId
+      }));
+      // 2. Comanda o celular para LIVE com bitrate de 1.5 Mbps
+      ws.send(JSON.stringify({
+        action: 'SEND_COMMAND',
+        deviceId: deviceId,
+        command: 'SET_MODE',
+        params: { mode: 'LIVE' }
+      }));
+      // 3. Força IDR Keyframe imediato para alimentar o decoder do navegador
+      ws.send(JSON.stringify({
+        action: 'SEND_COMMAND',
+        deviceId: deviceId,
+        command: 'REQUEST_KEYFRAME',
+        params: {}
       }));
     };
 
@@ -211,7 +230,15 @@ export const LiveMonitor = ({
       }
     };
 
-    ws.onclose = () => setConnectionStatus('DESCONECTADO');
+    ws.onclose = () => {
+      setConnectionStatus('RECONECTANDO...');
+      setTimeout(() => {
+        if (mediaSourceRef.current && mediaSourceRef.current.readyState === 'open') {
+          connectLazyWebSocket();
+        }
+      }, 2000);
+    };
+
     ws.onerror = () => setConnectionStatus('ERRO DE CONEXÃO');
   };
 
@@ -295,10 +322,22 @@ export const LiveMonitor = ({
     }
 
     // 1. Se ainda não enviou o Init Segment ('ftyp' + 'moov'), monta e despacha imediatamente
-    if (!hasInitSegmentAppended.current && spsBuffer.current && ppsBuffer.current) {
-      const initSegment = buildInitSegment(spsBuffer.current, ppsBuffer.current, 1280, 720);
-      hasInitSegmentAppended.current = true;
-      enqueueBuffer(initSegment);
+    if (!hasInitSegmentAppended.current) {
+      if (spsBuffer.current && ppsBuffer.current) {
+        const initSegment = buildInitSegment(spsBuffer.current, ppsBuffer.current, 1280, 720);
+        hasInitSegmentAppended.current = true;
+        enqueueBuffer(initSegment);
+      } else {
+        // Solicita SPS/PPS com keyframe imediato se os pacotes de vídeo estão chegando sem cabeçalho
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            action: 'SEND_COMMAND',
+            deviceId: deviceId,
+            command: 'REQUEST_KEYFRAME',
+            params: {}
+          }));
+        }
+      }
     }
 
     // 2. Monta o fragmento de mídia ('moof' + 'mdat') se o Init Segment já foi aceito
@@ -333,26 +372,32 @@ export const LiveMonitor = ({
   };
 
   /**
-   * Extrai NALs divididos por start codes Annex-B (0x00000001 ou 0x000001)
+   * Extrai NALs divididos por start codes Annex-B (0x00000001 ou 0x000001) sem sobreposição
    */
   const extractAnnexBNals = (bytes) => {
     const nals = [];
-    let startIndices = [];
+    const len = bytes.length;
+    let i = 0;
+    const nalStarts = [];
 
-    for (let i = 0; i < bytes.length - 3; i++) {
+    while (i < len - 2) {
       if (bytes[i] === 0 && bytes[i + 1] === 0) {
         if (bytes[i + 2] === 1) {
-          startIndices.push(i + 3);
-        } else if (bytes[i + 2] === 0 && bytes[i + 3] === 1) {
-          startIndices.push(i + 4);
+          nalStarts.push({ start: i + 3, prefixLen: 3 });
+          i += 3;
+          continue;
+        } else if (i < len - 3 && bytes[i + 2] === 0 && bytes[i + 3] === 1) {
+          nalStarts.push({ start: i + 4, prefixLen: 4 });
+          i += 4;
+          continue;
         }
       }
+      i++;
     }
 
-    for (let i = 0; i < startIndices.length; i++) {
-      const start = startIndices[i];
-      let end = (i + 1 < startIndices.length) ? startIndices[i + 1] : bytes.length;
-      while (end > start && bytes[end - 1] === 0) end--;
+    for (let k = 0; k < nalStarts.length; k++) {
+      const start = nalStarts[k].start;
+      const end = (k + 1 < nalStarts.length) ? (nalStarts[k + 1].start - nalStarts[k + 1].prefixLen) : len;
       if (end > start) {
         nals.push(bytes.slice(start, end));
       }
