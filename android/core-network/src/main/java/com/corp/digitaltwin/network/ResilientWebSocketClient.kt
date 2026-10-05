@@ -47,7 +47,9 @@ class ResilientWebSocketClient(
         private const val MAX_BACKOFF_MS = 16000L // 16s max em rede local
         private const val BACKOFF_MULTIPLIER = 1.8
         private const val OUTBOX_BATCH_SIZE = 50
-        private const val HEALTH_CHECK_INTERVAL_MS = 30000L // 30s Health Check
+        private const val HEALTH_CHECK_INTERVAL_MS = 30000L // 30s Health Check em modos ativos
+        private const val SILENT_SYNC_INTERVAL_MS = 300000L // 5 min Silent Sync no modo IDLE
+        private const val DEEP_SLEEP_RETRY_INTERVAL_MS = 3600000L // 1 hora Deep Sleep se desconectado em IDLE
     }
 
     enum class ConnectionState {
@@ -172,6 +174,8 @@ class ResilientWebSocketClient(
             scope.launch {
                 connectionMutex.withLock {
                     reconnectAttempt = 0
+                    isDeepSleep = false
+                    _isDeepSleepState.value = false
                     _connectionState.value = ConnectionState.CONNECTED
 
                     // Envia Hello Frame binário imediato com DeviceTag de 4 bytes
@@ -263,15 +267,34 @@ class ResilientWebSocketClient(
     }
 
     /**
-     * Envia áudio AAC comprimido (20ms).
+     * Envia áudio AAC comprimido (20ms) com Contextual Audio Tagging (1 byte).
      */
-    fun sendAudioPacket(audioData: ByteArray): Boolean {
+    fun sendAudioPacket(
+        audioData: ByteArray,
+        audioContext: Byte = BinaryProtocol.AudioContext.VOICE_PRIMARY
+    ): Boolean {
         if (_connectionState.value != ConnectionState.CONNECTED) return false
         val frame = BinaryProtocol.Frame(
             messageType = BinaryProtocol.TYPE_AUDIO,
+            flags = audioContext, // 1 byte AudioContext nas flags do wire protocol
             sequenceNumber = sequenceCounter.getAndIncrement(),
             deviceTag = deviceTag,
             payload = audioData
+        )
+        return sendRawFrame(frame)
+    }
+
+    /**
+     * Envia marcador de sincronização A/V (SYNC_TICK) com timestamp do Android a cada 1s.
+     */
+    fun sendSyncTick(): Boolean {
+        if (_connectionState.value != ConnectionState.CONNECTED) return false
+        val frame = BinaryProtocol.Frame(
+            messageType = BinaryProtocol.TYPE_SYNC_TICK,
+            sequenceNumber = sequenceCounter.getAndIncrement(),
+            timestamp = System.currentTimeMillis(),
+            deviceTag = deviceTag,
+            payload = ByteArray(0)
         )
         return sendRawFrame(frame)
     }
@@ -286,21 +309,47 @@ class ResilientWebSocketClient(
         }
     }
 
+    private var currentMode: DeviceMode = DeviceMode.IDLE
+    private var isDeepSleep: Boolean = false
+    private val _isDeepSleepState = MutableStateFlow(false)
+    val isDeepSleepState: StateFlow<Boolean> = _isDeepSleepState.asStateFlow()
+
+    fun updateMode(mode: DeviceMode) {
+        val oldMode = currentMode
+        currentMode = mode
+        if (isDeepSleep && (mode == DeviceMode.FOCUS || mode == DeviceMode.LIVE)) {
+            Log.i(TAG, "Saindo do Deep Sleep devido à alteração de modo: $oldMode -> $mode")
+            isDeepSleep = false
+            _isDeepSleepState.value = false
+            reconnectJob?.cancel()
+            if (_connectionState.value != ConnectionState.CONNECTED) {
+                reconnectAttempt = 0
+                connect()
+            }
+        }
+        if (_connectionState.value == ConnectionState.CONNECTED) {
+            startHealthCheckLoop()
+        }
+    }
+
     /**
-     * Health Check Loop: Envia heartbeat a cada 30 segundos no estado IDLE.
-     * Se o PC reiniciar, detecta imediatamente e entra em Offline Buffering.
+     * Silent Sync / Health Check Loop:
+     * - Modo IDLE: opera em Silent Sync, disparando Heartbeat de 1 byte a cada 5 minutos.
+     * - Modos FOCUS/LIVE: dispara verificação ativa a cada 30 segundos.
      */
     private fun startHealthCheckLoop() {
         healthCheckJob?.cancel()
         healthCheckJob = scope.launch {
             while (isActive && isRunning.get()) {
-                delay(HEALTH_CHECK_INTERVAL_MS)
+                val interval = if (currentMode == DeviceMode.IDLE) SILENT_SYNC_INTERVAL_MS else HEALTH_CHECK_INTERVAL_MS
+                delay(interval)
                 if (_connectionState.value == ConnectionState.CONNECTED) {
+                    val pingPayload = if (currentMode == DeviceMode.IDLE) byteArrayOf(0x01) else ByteArray(0)
                     val pingFrame = BinaryProtocol.Frame(
                         messageType = BinaryProtocol.TYPE_HEARTBEAT,
                         sequenceNumber = sequenceCounter.getAndIncrement(),
                         deviceTag = deviceTag,
-                        payload = ByteArray(0)
+                        payload = pingPayload
                     )
                     val ok = sendRawFrame(pingFrame)
                     if (!ok) {
@@ -323,12 +372,19 @@ class ResilientWebSocketClient(
 
             reconnectJob?.cancel()
             reconnectJob = scope.launch {
-                val exp = BACKOFF_MULTIPLIER.pow(reconnectAttempt.toDouble()).toLong()
-                val calculatedBackoff = min(MAX_BACKOFF_MS, INITIAL_BACKOFF_MS * exp)
-                val jitter = Random.nextDouble(0.8, 1.2)
-                val finalDelay = (calculatedBackoff * jitter).toLong()
+                val finalDelay = if (currentMode == DeviceMode.IDLE && reconnectAttempt >= 3) {
+                    isDeepSleep = true
+                    _isDeepSleepState.value = true
+                    Log.i(TAG, "🌙 Modo Deep Sleep ativo (IDLE): Tentando reconectar a cada 1 hora para economizar bateria.")
+                    DEEP_SLEEP_RETRY_INTERVAL_MS
+                } else {
+                    val exp = BACKOFF_MULTIPLIER.pow(reconnectAttempt.toDouble()).toLong()
+                    val calculatedBackoff = min(MAX_BACKOFF_MS, INITIAL_BACKOFF_MS * exp)
+                    val jitter = Random.nextDouble(0.8, 1.2)
+                    (calculatedBackoff * jitter).toLong()
+                }
 
-                Log.w(TAG, "Tentando reconectar ao PC ($currentServerUrl) em ${finalDelay}ms (Tentativa #${reconnectAttempt + 1})")
+                Log.w(TAG, "Tentando reconectar ao PC ($currentServerUrl) em ${finalDelay}ms (Tentativa #${reconnectAttempt + 1}, DeepSleep: $isDeepSleep)")
                 reconnectAttempt++
                 delay(finalDelay)
                 connect()

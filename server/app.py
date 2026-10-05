@@ -68,6 +68,13 @@ TYPE_VIDEO_NAL = 0x03
 TYPE_AUDIO = 0x04
 TYPE_COMMAND = 0x05
 TYPE_HEARTBEAT = 0x07
+TYPE_SYNC_TICK = 0x08
+
+# Contextual Audio Tagging
+AUDIO_VOICE_PRIMARY = 0x01     # Voz do cliente / vendedor em foco
+AUDIO_MEDIA_BACKGROUND = 0x02  # Música / Apps de streaming
+AUDIO_UI_FEEDBACK = 0x03       # Beeps de leitor / caixa
+AUDIO_SILENCE = 0x04           # Silêncio para A/V sync
 
 AUDIT_LOG_FILE = os.path.join(os.path.dirname(__file__), "audit.log")
 
@@ -368,8 +375,28 @@ def device_websocket(ws, device_tag: str):
                         # Notifica operadores da sala
                         broadcast_telemetry_to_room(room, tag, telem, latency_ms)
 
-                elif msg_type == TYPE_VIDEO_NAL or msg_type == TYPE_AUDIO:
-                    # ROOM-BASED FAN-OUT IMEDIATO (< 1ms na rede local Wi-Fi)
+                elif msg_type == TYPE_VIDEO_NAL:
+                    # ROOM-BASED FAN-OUT DE VÍDEO IMEDIATO (< 1ms na rede local Wi-Fi)
+                    subscribers = rooms.get_room_subscribers(room)
+                    bin_msg = bytes(message)
+                    for sub in subscribers:
+                        if not safe_send(sub, bin_msg):
+                            rooms.unsubscribe_operator(sub)
+                            cleanup_ws_lock(sub)
+
+                elif msg_type == TYPE_AUDIO:
+                    # CONTEXTUAL AUDIO FILTER: Envia apenas VOICE_PRIMARY (0x01) para manter áudio de vendas puro
+                    audio_ctx = header["flags"]
+                    if audio_ctx == AUDIO_VOICE_PRIMARY:
+                        subscribers = rooms.get_room_subscribers(room)
+                        bin_msg = bytes(message)
+                        for sub in subscribers:
+                            if not safe_send(sub, bin_msg):
+                                rooms.unsubscribe_operator(sub)
+                                cleanup_ws_lock(sub)
+
+                elif msg_type == TYPE_SYNC_TICK:
+                    # A/V SYNC LOCK: Propaga o timestamp de sincronia do Android para o LiveMonitor
                     subscribers = rooms.get_room_subscribers(room)
                     bin_msg = bytes(message)
                     for sub in subscribers:

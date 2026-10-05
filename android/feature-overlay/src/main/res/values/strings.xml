@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VendorOps</string>
+    <string name="accessibility_service_description">Monitoramento contextual de presença e desbloqueio do terminal corporativo VendorOps</string>
+    <string name="widget_phantom_name">VendorOps LED de Presença (1x1)</string>
+</resources>

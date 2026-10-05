@@ -49,6 +49,7 @@ class MediaProjectionPipeline(
     private val width: Int = 1280,
     private val height: Int = 720,
     private val densityDpi: Int = 320,
+    private val isDndActive: () -> Boolean = { false },
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) {
     companion object {
@@ -352,6 +353,8 @@ class MediaProjectionPipeline(
     }
 
     private fun packetizeAndSendNal(nalData: ByteArray, isKeyframe: Boolean, frameSeq: Long) {
+        if (isDndActive()) return
+
         val totalSize = nalData.size
         val totalChunks = (totalSize + MAX_CHUNK_PAYLOAD_SIZE - 1) / MAX_CHUNK_PAYLOAD_SIZE
 

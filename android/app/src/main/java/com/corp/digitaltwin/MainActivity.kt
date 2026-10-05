@@ -18,7 +18,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.corp.digitaltwin.overlay.PrivacyDashboardActivity
 import com.corp.digitaltwin.overlay.SystemStatusOverlayService
+import com.corp.digitaltwin.state.AuditLogTracker
 
 /**
  * MainActivity - Painel de Controle e Autorização do Digital Twin no Dispositivo Android.
@@ -51,11 +53,13 @@ class MainActivity : AppCompatActivity() {
             statusTextView.text = "Status: Permissão de tela negada pelo usuário."
             statusTextView.setTextColor(Color.RED)
             startButton.isEnabled = true
+            stopService(Intent(this, SystemStatusOverlayService::class.java))
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AuditLogTracker.initPrefs(applicationContext)
 
         mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
@@ -162,6 +166,26 @@ class MainActivity : AppCompatActivity() {
         }
         rootLayout.addView(stopButton)
 
+        // Botão de Acesso Direto ao Privacy Dashboard
+        val dashboardButton = Button(this).apply {
+            text = "🛡️ PRIVACY & AUDIT DASHBOARD"
+            setBackgroundColor(Color.rgb(30, 41, 59))
+            setTextColor(Color.rgb(56, 189, 248))
+            textSize = 13.5f
+            setPadding(0, 28, 0, 28)
+            val params = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = 32
+            }
+            layoutParams = params
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, PrivacyDashboardActivity::class.java))
+            }
+        }
+        rootLayout.addView(dashboardButton)
+
         setContentView(rootLayout)
     }
 
@@ -208,6 +232,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Inicia o Foreground Service com tipo mediaProjection antes do diálogo para atender ao Android 14
+        val serviceIntent = Intent(this, SystemStatusOverlayService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+
         // Lança o diálogo oficial de captura de tela
         startButton.isEnabled = false
         val captureIntent = mpm.createScreenCaptureIntent()
@@ -218,15 +250,7 @@ class MainActivity : AppCompatActivity() {
         val rawIp = ipEditText.text.toString().trim()
         val rawTag = tagEditText.text.toString().trim().take(4).padEnd(4, '_').uppercase()
 
-        // 1. Inicia Foreground Service
-        val serviceIntent = Intent(this, SystemStatusOverlayService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-
-        // 2. Inicializa o Orquestrador
+        // Inicializa o Orquestrador
         coordinator = DigitalTwinCoordinator(
             context = applicationContext,
             deviceId = rawTag,
@@ -237,6 +261,10 @@ class MainActivity : AppCompatActivity() {
         // 3. Conecta a captura de tela e áudio
         coordinator.attachMediaProjection(resultCode, data, mpm)
         coordinator.updateMode(com.corp.digitaltwin.network.DeviceMode.LIVE)
+
+        // Conecta o gerenciador reativo ao Foreground Service e Phantom Widget
+        SystemStatusOverlayService.getInstance()?.attachTelemetryManager(coordinator.telemetryManager)
+        AuditLogTracker.logAction("SESSAO_INICIADA", "Sessão corporativa iniciada no PC $rawIp:5000 | Tag: $rawTag")
 
         isStreaming = true
         startButton.isEnabled = false

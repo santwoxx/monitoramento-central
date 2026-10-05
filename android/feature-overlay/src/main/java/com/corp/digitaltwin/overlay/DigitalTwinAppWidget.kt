@@ -6,15 +6,22 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.widget.RemoteViews
 import com.corp.digitaltwin.network.DeviceMode
+import com.corp.digitaltwin.state.AuditLogTracker
 import com.corp.digitaltwin.state.DeviceTelemetryState
-import java.text.SimpleDateFormat
-import java.util.*
 
 /**
- * HomeScreen Widget para exibição pública e transparente do estado de monitoramento.
+ * DigitalTwinAppWidget - O "Phantom Widget" 1x1 de Baixa Presença.
+ * 
+ * Características:
+ * 1. Tamanho micro 1x1: ocupa apenas um ícone na grade da tela inicial.
+ * 2. LED Minimalista:
+ *    - Verde: IDLE (Telemetria leve / Silent Sync).
+ *    - Amarelo/Âmbar: FOCUS (Monitorando app corporativo específico).
+ *    - Vermelho: LIVE (Streaming em tempo real ativo).
+ * 3. Sem textos ou botões poluentes. Apenas um indicador sutil de presença.
+ * 4. Ao tocar, abre diretamente o PrivacyDashboardActivity com auditoria e log local.
  */
 class DigitalTwinAppWidget : AppWidgetProvider() {
 
@@ -35,39 +42,30 @@ class DigitalTwinAppWidget : AppWidgetProvider() {
             appWidgetId: Int,
             state: DeviceTelemetryState
         ) {
-            // Layout dinâmico do widget via RemoteViews
-            val views = RemoteViews(context.packageName, android.R.layout.simple_list_item_2)
+            val views = RemoteViews(context.packageName, R.layout.widget_phantom)
 
-            val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-            val formattedTime = timeFormat.format(Date(state.lastUpdateEpochMs))
-
-            val (badgeText, badgeColor) = when (state.mode) {
-                DeviceMode.IDLE -> "STATUS: IDLE (60s)" to Color.rgb(34, 197, 94)
-                DeviceMode.FOCUS -> "STATUS: FOCO ATIVO (2s)" to Color.rgb(245, 158, 11)
-                DeviceMode.LIVE -> "STATUS: TRANSMISSÃO AO VIVO" to Color.rgb(239, 68, 68)
+            val ledDrawableRes = when {
+                AuditLogTracker.isDndActive() -> R.drawable.ic_phantom_led_amber
+                state.mode == DeviceMode.LIVE -> R.drawable.ic_phantom_led_red
+                state.mode == DeviceMode.FOCUS -> R.drawable.ic_phantom_led_amber
+                else -> R.drawable.ic_phantom_led_green
             }
 
-            views.setTextViewText(
-                android.R.id.text1,
-                "🛡️ DIGITAL TWIN: $badgeText"
-            )
-            views.setTextColor(android.R.id.text1, badgeColor)
+            views.setImageViewResource(R.id.phantom_widget_led, ledDrawableRes)
 
-            views.setTextViewText(
-                android.R.id.text2,
-                "Bateria: ${state.batteryPct}% | App: ${state.focusedPackage} | Sync: $formattedTime"
-            )
-
-            val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            if (launchIntent != null) {
-                val pendingIntent = PendingIntent.getActivity(
-                    context,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                views.setOnClickPendingIntent(android.R.id.text1, pendingIntent)
+            // Toque no micro-widget abre o Privacy Dashboard de transparência
+            val dashboardIntent = Intent(context, PrivacyDashboardActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                appWidgetId,
+                dashboardIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            views.setOnClickPendingIntent(R.id.phantom_widget_root, pendingIntent)
+            views.setOnClickPendingIntent(R.id.phantom_widget_led, pendingIntent)
 
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }

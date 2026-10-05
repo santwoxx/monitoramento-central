@@ -65,8 +65,11 @@ class TelemetryStateManager(
         samplingJob?.cancel()
         samplingJob = scope.launch {
             while (isActive) {
+                val isDnd = AuditLogTracker.isDndActive()
+                val isDeepSleep = webSocketClient.isDeepSleepState.value
+
                 val delayMs = when (_stateFlow.value.mode) {
-                    DeviceMode.IDLE -> 60_000L  // 60 segundos
+                    DeviceMode.IDLE -> if (isDeepSleep) 3_600_000L else 300_000L // 5m Silent Sync ou 1h Deep Sleep
                     DeviceMode.FOCUS -> 2_000L   // 2 segundos
                     DeviceMode.LIVE -> 1_000L    // 1 segundo
                 }
@@ -78,10 +81,10 @@ class TelemetryStateManager(
                 webSocketClient.sendTelemetry(
                     BinaryProtocol.TelemetryPayload(
                         deviceId = deviceId,
-                        stateMode = currentTelemetry.mode.code,
+                        stateMode = if (isDnd) 0x03.toByte() else currentTelemetry.mode.code,
                         batteryPct = currentTelemetry.batteryPct,
                         isCharging = currentTelemetry.isCharging,
-                        focusedPackage = currentTelemetry.focusedPackage,
+                        focusedPackage = if (isDnd) "[DND PAUSA] ${currentTelemetry.focusedPackage}" else currentTelemetry.focusedPackage,
                         cpuUsagePct = currentTelemetry.cpuUsagePct,
                         ramUsageMb = currentTelemetry.ramUsageMb
                     )

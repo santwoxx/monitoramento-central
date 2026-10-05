@@ -33,6 +33,15 @@ object BinaryProtocol {
     const val TYPE_COMMAND: Byte = 0x05
     const val TYPE_COMMAND_ACK: Byte = 0x06
     const val TYPE_HEARTBEAT: Byte = 0x07
+    const val TYPE_SYNC_TICK: Byte = 0x08
+
+    // Audio Context (Contextual Audio Tagging - 1 byte)
+    object AudioContext {
+        const val VOICE_PRIMARY: Byte = 0x01     // Voz de cliente/vendedor em foco
+        const val MEDIA_BACKGROUND: Byte = 0x02  // Música de app (Spotify, etc.)
+        const val UI_FEEDBACK: Byte = 0x03       // Beeps de caixa / UI
+        const val SILENCE: Byte = 0x04           // Silêncio estrutural para A/V sync
+    }
 
     // Flags
     const val FLAG_NONE: Byte = 0x00

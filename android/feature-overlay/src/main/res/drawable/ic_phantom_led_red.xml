@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Glow externo -->
+    <path
+        android:fillColor="#33EF4444"
+        android:pathData="M24,24m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0" />
+    <!-- LED central vermelho (LIVE) -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M24,24m-12,0a12,12 0,1 1,24 0a12,12 0,1 1,-24 0" />
+    <!-- Brilho central spec -->
+    <path
+        android:fillColor="#80FFFFFF"
+        android:pathData="M20,18m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+</vector>

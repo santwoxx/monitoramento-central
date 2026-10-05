@@ -90,20 +90,26 @@ class DigitalTwinCoordinator(
             webSocketClient = webSocketClient,
             deviceTag = deviceId.take(4).padEnd(4, '_'),
             width = 1280,
-            height = 720
+            height = 720,
+            densityDpi = 320,
+            isDndActive = { com.corp.digitaltwin.state.AuditLogTracker.isDndActive() }
         ).also {
             it.start()
             it.updateMode(currentMode)
         }
 
-        // 2. Pipeline de Áudio (Captura USAGE_MEDIA com Silence Suppression)
+        // 2. Pipeline de Áudio (Captura USAGE_MEDIA com Sales-Vox VAD e AGC)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             audioPipeline?.stop()
             audioPipeline = AudioPlaybackCapturePipeline(
                 mediaProjection = mediaProjection,
-                webSocketClient = webSocketClient
+                webSocketClient = webSocketClient,
+                isDndActive = { com.corp.digitaltwin.state.AuditLogTracker.isDndActive() },
+                getFocusedPackage = { telemetryManager.stateFlow.value.focusedPackage }
             ).also { it.start() }
         }
+
+        com.corp.digitaltwin.state.AuditLogTracker.logAction("MEDIA_ATTACH", "Pipelines de vídeo 720p e áudio anexados.")
     }
 
     /**
@@ -120,7 +126,7 @@ class DigitalTwinCoordinator(
 
     /**
      * Atualiza o modo de operação do dispositivo em runtime:
-     * - IDLE: 5 FPS, 300 Kbps, telemetria a cada 60s
+     * - IDLE: 5 FPS, 300 Kbps, telemetria a cada 5m (Silent Sync)
      * - FOCUS: 15 FPS, 800 Kbps, telemetria a cada 2s
      * - LIVE: 30 FPS, 1.5 Mbps, stream contínuo
      */
@@ -129,11 +135,14 @@ class DigitalTwinCoordinator(
             Log.i(TAG, "Alterando modo operacional: $currentMode -> $mode")
             currentMode = mode
             telemetryManager.setMode(mode)
+            webSocketClient.updateMode(mode)
             mediaPipeline?.updateMode(mode)
+            com.corp.digitaltwin.state.AuditLogTracker.logAction("MODO_ALTERADO", "Modo operacional alterado para $mode")
 
             // Se transitando para LIVE, força I-Frame imediato
             if (mode == DeviceMode.LIVE) {
                 requestSyncFrame()
+                com.corp.digitaltwin.state.AuditLogTracker.logAction("STREAM_LIVE", "Transmissão ao vivo de tela e áudio ativada.")
             }
         }
     }
