@@ -61,9 +61,9 @@ class MainActivity : AppCompatActivity() {
 
         // Carrega configurações salvas
         val prefs = getSharedPreferences("digital_twin_config", Context.MODE_PRIVATE)
-        val savedIp = prefs.getString("server_ip", "ws://192.168.1.100:5000")
+        val savedIp = prefs.getString("server_ip", "ws://192.168.1.116:5000")
             ?.replace("ws://", "")
-            ?.replace(":5000", "") ?: "192.168.1.100"
+            ?.replace(":5000", "") ?: "192.168.1.116"
         val savedTag = prefs.getString("device_tag", "VND1") ?: "VND1"
 
         // Constrói interface programática

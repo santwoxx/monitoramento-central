@@ -17,7 +17,8 @@
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="Digital Twin Client"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar">
 
         <activity
             android:name="com.corp.digitaltwin.MainActivity"

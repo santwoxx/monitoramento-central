@@ -41,7 +41,7 @@ class ResilientWebSocketClient(
         private const val TAG = "ResilientWSClient"
         private const val PREFS_NAME = "digital_twin_config"
         private const val KEY_SERVER_IP = "server_ip"
-        private const val DEFAULT_SERVER_URL = "ws://192.168.1.100:5000"
+        private const val DEFAULT_SERVER_URL = "ws://192.168.1.116:5000"
 
         private const val INITIAL_BACKOFF_MS = 1000L
         private const val MAX_BACKOFF_MS = 16000L // 16s max em rede local
