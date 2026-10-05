@@ -49,6 +49,12 @@ class DigitalTwinCoordinator(
         commandHandler = commandHandler
     )
 
+    init {
+        if (initialServerUrl.isNotBlank()) {
+            webSocketClient.updateServerIp(initialServerUrl)
+        }
+    }
+
     val telemetryManager = TelemetryStateManager(
         context = context,
         deviceId = deviceId,

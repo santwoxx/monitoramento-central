@@ -387,10 +387,14 @@ def operator_websocket(ws):
                         current_room = f"device_{target_id}"
                         rooms.subscribe_operator(current_room, ws)
 
-                        # Força I-Frame IDR imediato ao vendedor
+                        # Ativa modo LIVE e força I-Frame IDR imediato ao vendedor
                         dev_ws = rooms.get_device_ws(target_id)
                         if dev_ws:
-                            dev_ws.send(json.dumps({"action": "REQUEST_KEYFRAME"}))
+                            try:
+                                dev_ws.send(json.dumps({"action": "SET_MODE", "mode": "LIVE"}))
+                                dev_ws.send(json.dumps({"action": "REQUEST_KEYFRAME"}))
+                            except Exception as e:
+                                logger.warning(f"Falha ao notificar device: {e}")
 
                         ws.send(json.dumps({
                             "type": "SUBSCRIBED",

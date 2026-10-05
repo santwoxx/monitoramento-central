@@ -236,6 +236,7 @@ class MainActivity : AppCompatActivity() {
 
         // 3. Conecta a captura de tela e áudio
         coordinator.attachMediaProjection(resultCode, data, mpm)
+        coordinator.updateMode(com.corp.digitaltwin.network.DeviceMode.LIVE)
 
         isStreaming = true
         startButton.isEnabled = false
