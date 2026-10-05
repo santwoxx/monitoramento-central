@@ -12,6 +12,8 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
@@ -74,6 +76,7 @@ class MediaProjectionPipeline(
     private val isStreaming = AtomicBoolean(false)
     private var mediaCodec: MediaCodec? = null
     private var virtualDisplay: VirtualDisplay? = null
+    private var projectionCallback: MediaProjection.Callback? = null
     private var encodingJob: Job? = null
     private var watermarkJob: Job? = null
     private var spsPpsBuffer: ByteArray? = null
@@ -109,6 +112,10 @@ class MediaProjectionPipeline(
 
             try { virtualDisplay?.release() } catch (_: Exception) {}
             try { mediaCodec?.stop(); mediaCodec?.release() } catch (_: Exception) {}
+            projectionCallback?.let {
+                try { mediaProjection?.unregisterCallback(it) } catch (_: Exception) {}
+            }
+            projectionCallback = null
             virtualDisplay = null
             mediaCodec = null
         }
@@ -259,6 +266,15 @@ class MediaProjectionPipeline(
             val inputSurface = codec.createInputSurface()
             codec.start()
             mediaCodec = codec
+
+            val callback = object : MediaProjection.Callback() {
+                override fun onStop() {
+                    Log.i(TAG, "MediaProjection finalizado pelo sistema ou usuário.")
+                    stop()
+                }
+            }
+            projectionCallback = callback
+            mp.registerCallback(callback, Handler(Looper.getMainLooper()))
 
             virtualDisplay = mp.createVirtualDisplay(
                 "DigitalTwinMirror",
