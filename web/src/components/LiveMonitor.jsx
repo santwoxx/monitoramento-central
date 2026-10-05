@@ -216,17 +216,25 @@ export const LiveMonitor = ({
       }));
     };
 
-    ws.onmessage = (event) => {
-      if (typeof event.data === 'string') {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'TELEMETRY_UPDATE') {
-          setStreamStats(prev => ({
-            ...prev,
-            latencyMs: Math.round(msg.latencyMs || prev.latencyMs)
-          }));
+    ws.onmessage = async (event) => {
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data);
+          if (msg.type === 'TELEMETRY_UPDATE') {
+            setStreamStats(prev => ({
+              ...prev,
+              latencyMs: Math.round(msg.latencyMs || prev.latencyMs)
+            }));
+          }
+        } catch (_) {}
+      } else {
+        if (data instanceof Blob) {
+          data = await data.arrayBuffer();
         }
-      } else if (event.data instanceof ArrayBuffer) {
-        handleIncomingBinaryFrame(event.data);
+        if (data instanceof ArrayBuffer) {
+          handleIncomingBinaryFrame(data);
+        }
       }
     };
 

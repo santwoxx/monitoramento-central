@@ -209,6 +209,29 @@ class AsyncAuditLogger:
 
 audit_logger = AsyncAuditLogger(AUDIT_LOG_FILE)
 
+# --- THREAD-SAFE WEBSOCKET ROUTING ---
+_ws_locks = {}
+_ws_locks_guard = threading.Lock()
+
+def safe_send(ws, data) -> bool:
+    with _ws_locks_guard:
+        if ws not in _ws_locks:
+            _ws_locks[ws] = threading.Lock()
+        lock = _ws_locks[ws]
+    with lock:
+        try:
+            if isinstance(data, (bytes, bytearray)):
+                ws.send(bytes(data))
+            else:
+                ws.send(str(data))
+            return True
+        except Exception:
+            return False
+
+def cleanup_ws_lock(ws):
+    with _ws_locks_guard:
+        _ws_locks.pop(ws, None)
+
 # --- WIRE PROTOCOL DECODER ---
 
 def decode_wire_header(data: bytes):
@@ -348,18 +371,21 @@ def device_websocket(ws, device_tag: str):
                 elif msg_type == TYPE_VIDEO_NAL or msg_type == TYPE_AUDIO:
                     # ROOM-BASED FAN-OUT IMEDIATO (< 1ms na rede local Wi-Fi)
                     subscribers = rooms.get_room_subscribers(room)
+                    bin_msg = bytes(message)
                     for sub in subscribers:
-                        try: sub.send(message)
-                        except Exception: rooms.unsubscribe_operator(sub)
+                        if not safe_send(sub, bin_msg):
+                            rooms.unsubscribe_operator(sub)
+                            cleanup_ws_lock(sub)
 
                 elif msg_type == TYPE_HEARTBEAT:
                     # Responde ao ping de health check de 30s
-                    ws.send(json.dumps({"type": "PONG", "timestamp": now_ms}))
+                    safe_send(ws, json.dumps({"type": "PONG", "timestamp": now_ms}))
 
     except Exception as e:
         logger.warning(f"Conexão do device [{tag}] interrompida: {e}")
     finally:
         rooms.set_offline(tag)
+        cleanup_ws_lock(ws)
         audit_logger.log("DEVICE_OFFLINE", tag, {})
         logger.info(f"Dispositivo [{tag}] desconectado.")
 
@@ -391,12 +417,12 @@ def operator_websocket(ws):
                         dev_ws = rooms.get_device_ws(target_id)
                         if dev_ws:
                             try:
-                                dev_ws.send(json.dumps({"action": "SET_MODE", "mode": "LIVE"}))
-                                dev_ws.send(json.dumps({"action": "REQUEST_KEYFRAME"}))
+                                safe_send(dev_ws, json.dumps({"action": "SET_MODE", "mode": "LIVE"}))
+                                safe_send(dev_ws, json.dumps({"action": "REQUEST_KEYFRAME"}))
                             except Exception as e:
                                 logger.warning(f"Falha ao notificar device: {e}")
 
-                        ws.send(json.dumps({
+                        safe_send(ws, json.dumps({
                             "type": "SUBSCRIBED",
                             "room": current_room,
                             "deviceId": target_id,
@@ -415,7 +441,7 @@ def operator_websocket(ws):
                         if dev_ws:
                             cmd_payload = {"action": cmd, **params}
                             try:
-                                dev_ws.send(json.dumps(cmd_payload))
+                                safe_send(dev_ws, json.dumps(cmd_payload))
                                 logger.info(f"Comando [{cmd}] despachado para [{target_id}] via operator socket.")
                             except Exception as e:
                                 logger.warning(f"Erro ao enviar comando para [{target_id}]: {e}")
@@ -427,6 +453,7 @@ def operator_websocket(ws):
         pass
     finally:
         rooms.unsubscribe_operator(ws)
+        cleanup_ws_lock(ws)
         logger.info("Monitor React desconectado.")
 
 def broadcast_telemetry_to_room(room: str, tag: str, telem: dict, latency_ms: float):
@@ -440,8 +467,9 @@ def broadcast_telemetry_to_room(room: str, tag: str, telem: dict, latency_ms: fl
         "data": telem
     })
     for sub in subs:
-        try: sub.send(msg)
-        except Exception: rooms.unsubscribe_operator(sub)
+        if not safe_send(sub, msg):
+            rooms.unsubscribe_operator(sub)
+            cleanup_ws_lock(sub)
 
 if __name__ == "__main__":
     # Registra salas dos vendedores no catálogo inicial
