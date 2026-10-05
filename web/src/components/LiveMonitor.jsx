@@ -506,7 +506,7 @@ export const LiveMonitor = ({
       <div className="live-monitor-header">
         <div className="device-identity">
           <span className="live-pulsing-dot" />
-          <h3 className="device-title">Sala: device_{deviceId} ({serverIp}:5000)</h3>
+          <h3 className="device-title">Sala: device_{deviceId} ({(serverIp || 'localhost').replace(/\.5000$/, '').split(':')[0]}:5000)</h3>
           <span className="status-badge">{connectionStatus}</span>
         </div>
 

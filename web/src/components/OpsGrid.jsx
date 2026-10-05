@@ -93,7 +93,15 @@ export const OpsGrid = ({
   const handleIpSubmit = (e) => {
     e.preventDefault();
     if (inputIp.trim()) {
-      onServerIpChange(inputIp.trim());
+      const clean = inputIp.trim()
+        .replace(/^https?:\/\//i, '')
+        .replace(/^wss?:\/\//i, '')
+        .split('/')[0]
+        .replace(/\.5000$/, '')
+        .replace(/:[0-9]+$/, '')
+        .trim();
+      setInputIp(clean);
+      onServerIpChange(clean);
     }
   };
 

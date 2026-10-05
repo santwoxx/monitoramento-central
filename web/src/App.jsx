@@ -12,7 +12,10 @@ const sanitizeIp = (ip) => {
     .replace(/^https?:\/\//i, '')
     .replace(/^wss?:\/\//i, '')
     .split('/')[0]
-    .replace(/:5000$/, '');
+    .replace(/\.5000$/, '')
+    .replace(/:[0-9]+$/, '')
+    .replace(/:[0-9]+$/, '')
+    .trim();
 };
 
 export function App() {
