@@ -67,6 +67,39 @@ export const LiveMonitor = ({
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const voiceTimeoutRef = useRef(null);
 
+  // Web Audio API Engine (PCM 16-bit 48kHz Direct Streaming)
+  const audioCtxRef = useRef(null);
+  const gainNodeRef = useRef(null);
+  const nextPlayTimeRef = useRef(0);
+
+  const initAudioEngine = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        const ctx = new AudioCtx({ sampleRate: 48000 });
+        const gain = ctx.createGain();
+        gain.gain.value = 1.0;
+        gain.connect(ctx.destination);
+        audioCtxRef.current = ctx;
+        gainNodeRef.current = gain;
+        nextPlayTimeRef.current = ctx.currentTime;
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+    } catch (e) {
+      console.error("Falha ao inicializar Web Audio Engine:", e);
+    }
+  };
+
+  const toggleAudio = () => {
+    const nextState = !isAudioEnabled;
+    setIsAudioEnabled(nextState);
+    if (nextState) {
+      initAudioEngine();
+    }
+  };
+
   // Estados do pipeline de demuxing
   const hasInitSegmentAppended = useRef(false);
   const spsBuffer = useRef(null);
@@ -153,6 +186,10 @@ export const LiveMonitor = ({
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
+      }
+      if (audioCtxRef.current) {
+        try { audioCtxRef.current.close(); } catch (_) {}
+        audioCtxRef.current = null;
       }
       if (mediaSource.readyState === 'open') {
         try { mediaSource.endOfStream(); } catch (_) {}
@@ -271,10 +308,48 @@ export const LiveMonitor = ({
       return;
     }
 
-    if (msgType === 0x04) { // TYPE_AUDIO (Voz Filtrada Sales-Vox)
+    if (msgType === 0x04) { // TYPE_AUDIO (Voz Filtrada Sales-Vox 16-bit PCM @ 48kHz)
       setIsVoiceActive(true);
       if (voiceTimeoutRef.current) clearTimeout(voiceTimeoutRef.current);
-      voiceTimeoutRef.current = setTimeout(() => setIsVoiceActive(false), 350);
+      voiceTimeoutRef.current = setTimeout(() => setIsVoiceActive(false), 400);
+
+      // Reproduz áudio em tempo real via Web Audio API se o operador desmutar
+      if (isAudioEnabled) {
+        initAudioEngine();
+        const ctx = audioCtxRef.current;
+        if (ctx) {
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          const pcmPayload = buffer.slice(24);
+          const sampleCount = Math.floor(pcmPayload.byteLength / 2);
+          if (sampleCount > 0) {
+            const int16View = new Int16Array(pcmPayload, 0, sampleCount);
+            const float32 = new Float32Array(sampleCount);
+
+            for (let i = 0; i < sampleCount; i++) {
+              float32[i] = int16View[i] / 32768.0;
+            }
+
+            const audioBuf = ctx.createBuffer(1, sampleCount, 48000);
+            audioBuf.copyToChannel(float32, 0);
+
+            const sourceNode = ctx.createBufferSource();
+            sourceNode.buffer = audioBuf;
+            sourceNode.connect(gainNodeRef.current || ctx.destination);
+
+            const currTime = ctx.currentTime;
+            if (nextPlayTimeRef.current < currTime) {
+              nextPlayTimeRef.current = currTime + 0.02; // Jitter buffer de 20ms
+            } else if (nextPlayTimeRef.current - currTime > 0.12) {
+              nextPlayTimeRef.current = currTime + 0.02; // Resync se atrasar > 120ms
+            }
+
+            sourceNode.start(nextPlayTimeRef.current);
+            nextPlayTimeRef.current += audioBuf.duration;
+          }
+        }
+      }
       return;
     }
 
@@ -614,10 +689,11 @@ export const LiveMonitor = ({
             ⚡ Forçar IDR
           </button>
           <button 
-            className={`action-btn ${isAudioEnabled ? 'active' : ''}`}
-            onClick={() => setIsAudioEnabled(!isAudioEnabled)}
+            className={`action-btn ${isAudioEnabled ? 'active' : ''} ${!isAudioEnabled && isVoiceActive ? 'pulse-audio' : ''}`}
+            onClick={toggleAudio}
+            title={isAudioEnabled ? "Silenciar Áudio" : "Ativar Áudio de Vendas em Tempo Real"}
           >
-            {isAudioEnabled ? '🔊 Áudio On' : '🔇 Áudio Mudo'}
+            {isAudioEnabled ? '🔊 Áudio On (48kHz)' : (isVoiceActive ? '🎙️ Voz Detectada! (Clique p/ Ouvir)' : '🔇 Áudio Mudo')}
           </button>
           <button className="close-btn" onClick={onClose} title="Fechar e Desconectar Socket">✕</button>
         </div>
@@ -629,8 +705,16 @@ export const LiveMonitor = ({
           autoPlay 
           playsInline 
           muted={!isAudioEnabled}
+          onClick={!isAudioEnabled ? toggleAudio : undefined}
+          style={{ cursor: !isAudioEnabled ? 'pointer' : 'default' }}
           className="stream-video-element"
         />
+
+        {!isAudioEnabled && isVoiceActive && (
+          <div className="audio-unmute-hint" onClick={toggleAudio} title="Clique para desmutar e ouvir a voz em tempo real">
+            🎙️ Voz ao vivo detectada — Clique para ouvir
+          </div>
+        )}
 
         <div className="telemetry-hud">
           <div className="hud-metric">

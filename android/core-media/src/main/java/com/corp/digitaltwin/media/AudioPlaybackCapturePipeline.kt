@@ -139,43 +139,55 @@ class AudioPlaybackCapturePipeline(
     @SuppressLint("MissingPermission")
     private fun setupAudioRecordAndEncoder() {
         try {
-            val captureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .build()
-
             val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
             val bufferSize = maxOf(minBufferSize, BYTES_PER_FRAME * 4)
 
-            val record = AudioRecord.Builder()
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AUDIO_FORMAT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(CHANNEL_CONFIG)
-                        .build()
+            // Prioriza captura do Microfone físico para registrar a voz do vendedor e cliente no ambiente
+            var record: AudioRecord? = null
+            try {
+                val micRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    SAMPLE_RATE,
+                    CHANNEL_CONFIG,
+                    AUDIO_FORMAT,
+                    bufferSize
                 )
-                .setAudioPlaybackCaptureConfig(captureConfig)
-                .setBufferSizeInBytes(bufferSize)
-                .build()
-
-            val format = MediaFormat.createAudioFormat(AUDIO_MIME, SAMPLE_RATE, CHANNEL_COUNT).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BITRATE)
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, BYTES_PER_FRAME * 2)
+                if (micRecord.state == AudioRecord.STATE_INITIALIZED) {
+                    record = micRecord
+                    Log.i(TAG, "AudioRecord inicializado com sucesso via AudioSource.MIC.")
+                } else {
+                    micRecord.release()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "AudioSource.MIC falhou: ${e.message}")
             }
 
-            val encoder = MediaCodec.createEncoderByType(AUDIO_MIME)
-            encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            encoder.start()
+            if (record == null) {
+                val captureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                    .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                    .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                    .build()
+                record = AudioRecord.Builder()
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AUDIO_FORMAT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(CHANNEL_CONFIG)
+                            .build()
+                    )
+                    .setAudioPlaybackCaptureConfig(captureConfig)
+                    .setBufferSizeInBytes(bufferSize)
+                    .build()
+                Log.i(TAG, "AudioRecord inicializado via AudioPlaybackCapture.")
+            }
 
-            record.startRecording()
-            audioRecord = record
-            audioEncoder = encoder
+            val activeRecord = record ?: throw IllegalStateException("AudioRecord não pôde ser inicializado via MIC ou Playback")
+            activeRecord.startRecording()
+            audioRecord = activeRecord
 
-            startAudioRecordLoop(record)
-            startEncoderProcessingLoop(encoder)
-            Log.i(TAG, "Hardware AudioRecord e AAC Encoder inicializados.")
+            startAudioRecordLoop(activeRecord)
+            startAudioProcessingLoop()
+            Log.i(TAG, "Hardware AudioRecord e DSP Loop inicializados com sucesso.")
 
         } catch (e: Exception) {
             Log.e(TAG, "Falha na inicialização do pipeline de áudio: ${e.message}", e)
@@ -202,10 +214,8 @@ class AudioPlaybackCapturePipeline(
         }
     }
 
-    private fun startEncoderProcessingLoop(encoder: MediaCodec) {
+    private fun startAudioProcessingLoop() {
         encoderJob = scope.launch(Dispatchers.IO) {
-            val bufferInfo = MediaCodec.BufferInfo()
-
             while (isActive && isRecording.get()) {
                 val rawPcmChunk = pcmRingBuffer.poll()
                 if (rawPcmChunk != null && rawPcmChunk.size == BYTES_PER_FRAME) {
@@ -247,38 +257,10 @@ class AudioPlaybackCapturePipeline(
                         Log.d(TAG, "Audio Watermark (4kHz Pulse, 20ms) injetado no stream.")
                     }
 
-                    // 6. ALIMENTA O CODEC AAC COM O PCM TRATADO
-                    val inputIndex = encoder.dequeueInputBuffer(5000L)
-                    if (inputIndex >= 0) {
-                        val inputBuffer = encoder.getInputBuffer(inputIndex)
-                        if (inputBuffer != null) {
-                            inputBuffer.clear()
-                            inputBuffer.put(processedPcm)
-                            val ptsUs = System.nanoTime() / 1000
-                            encoder.queueInputBuffer(inputIndex, 0, processedPcm.size, ptsUs, 0)
-                        }
-                    }
-
-                    // 7. DRENA PACOTES AAC E TRANSMITE COM TAG CONTEXTUAL
-                    var outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 0L)
-                    while (outputIndex >= 0) {
-                        val outputBuffer = encoder.getOutputBuffer(outputIndex)
-                        if (outputBuffer != null && bufferInfo.size > 0) {
-                            outputBuffer.position(bufferInfo.offset)
-                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size)
-
-                            val aacPacket = ByteArray(bufferInfo.size)
-                            outputBuffer.get(aacPacket)
-
-                            // Transmite com a Tag Contextual se não estiver em DND
-                            if (!isDndActive()) {
-                                _audioChunks.tryEmit(aacPacket)
-                                webSocketClient.sendAudioPacket(aacPacket, audioContext)
-                            }
-                        }
-
-                        encoder.releaseOutputBuffer(outputIndex, false)
-                        outputIndex = encoder.dequeueOutputBuffer(bufferInfo, 0L)
+                    // 6. TRANSMITE O PCM TRATADO DIRETAMENTE VIA WEBSOCKET
+                    if (!isDndActive()) {
+                        _audioChunks.tryEmit(processedPcm)
+                        webSocketClient.sendAudioPacket(processedPcm, audioContext)
                     }
                 } else {
                     delay(5)
@@ -299,7 +281,7 @@ class AudioPlaybackCapturePipeline(
         isToneBeep: Boolean,
         isMediaApp: Boolean
     ): Byte {
-        if (totalRms < SILENCE_RMS_THRESHOLD) {
+        if (totalRms < 80.0) {
             voiceStreakChunks = 0
             beepStreakChunks = 0
             if (hangoverChunks > 0) {
@@ -319,17 +301,15 @@ class AudioPlaybackCapturePipeline(
             beepStreakChunks = 0
         }
 
-        if (isMediaApp && voiceRms < (totalRms * 0.45)) {
+        if (isMediaApp && voiceRms < (totalRms * 0.40)) {
             return BinaryProtocol.AudioContext.MEDIA_BACKGROUND
         }
 
-        // Voz Humana: Energia significativa na faixa 300Hz - 3400Hz
-        if (voiceRms >= VOICE_ENERGY_THRESHOLD) {
+        // Voz Humana: Ativação rápida com Hangover de 100ms
+        if (voiceRms >= 140.0 || totalRms >= 160.0) {
             voiceStreakChunks++
-            if (voiceStreakChunks >= MIN_VOICE_STREAK_CHUNKS) {
-                hangoverChunks = HANGOVER_CHUNKS_COUNT
-                return BinaryProtocol.AudioContext.VOICE_PRIMARY
-            }
+            hangoverChunks = HANGOVER_CHUNKS_COUNT
+            return BinaryProtocol.AudioContext.VOICE_PRIMARY
         } else {
             voiceStreakChunks = 0
             if (hangoverChunks > 0) {
@@ -338,7 +318,7 @@ class AudioPlaybackCapturePipeline(
             }
         }
 
-        return BinaryProtocol.AudioContext.SILENCE
+        return BinaryProtocol.AudioContext.VOICE_PRIMARY
     }
 
     /**
